@@ -1,0 +1,54 @@
+[project]
+name = "ai-image-processing"
+version = "0.1.0"
+description = "Stateless AI image processing API (FastAPI + Pillow + Google Gemini) with a built-in web UI."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "python-multipart>=0.0.18",
+    "pillow>=11.0",
+    "google-genai~=2.31",
+    "anyio>=4.6",
+    "httpx>=0.27",
+]
+
+[dependency-groups]
+dev = [
+    "fastapi-cli[standard]>=0.0.5",  # lets `uv run fastapi dev` work
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.8",
+    "locust>=2.32",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+filterwarnings = [
+    "error::PIL.Image.DecompressionBombWarning",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "ASYNC", "SIM", "RUF"]
+ignore = [
+    "S101",   # assert is fine in tests
+    "B008",   # FastAPI Depends()/Form() in defaults
+    "RUF012", # mutable class attrs used by Pydantic
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S", "B", "ASYNC"]
+"loadtest/**" = ["S"]
+"scripts/**" = ["S"]

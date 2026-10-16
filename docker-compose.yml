@@ -1,0 +1,27 @@
+# One stateless service: no database, no queue, no stored files.
+#   cp .env.example .env   # optionally add GEMINI_API_KEY
+#   docker compose up --build
+# Open http://localhost:8000 (API docs at /docs)
+
+services:
+  app:
+    build: .
+    image: ai-image-processing:latest
+    env_file: .env
+    environment:
+      TEMP_DIR: /tmp/imgproc
+    command:
+      - uvicorn
+      - app.main:app
+      - --host=0.0.0.0
+      - --port=8000
+      - --proxy-headers
+      - --forwarded-allow-ips=${FORWARDED_ALLOW_IPS:-127.0.0.1}
+      - --no-access-log
+    ports:
+      - "8000:8000"
+    # Read-only container; uploads only exist in memory-backed /tmp while processed.
+    read_only: true
+    tmpfs:
+      - /tmp:size=1g
+    restart: unless-stopped
