@@ -24,8 +24,6 @@ const els = {
   quality: $("quality"),
   qualityValue: $("quality-value"),
   enhance: $("enhance"),
-  aiGroup: $("ai-group"),
-  detect: $("detect"),
   filterChips: $("filter-chips"),
   process: $("process"),
   formError: $("form-error"),
@@ -98,9 +96,6 @@ async function loadCapabilities() {
     els.status.dataset.state = "limited";
     els.status.textContent = "Ready: Gemini isn't configured, so only resize, convert and enhance are available";
   }
-
-  els.detect.disabled = !capabilities.object_detection;
-  if (!capabilities.object_detection) els.detect.checked = false;
 }
 
 // --- Choosing files --------------------------------------------------------------------
@@ -159,7 +154,8 @@ function readOptions() {
   if (els.format.value) fields.output_format = els.format.value;
   if (els.format.value !== "PNG") fields.quality = els.quality.value;
   if (els.enhance.checked) fields.enhance_image = "true";
-  if (els.detect.checked && !els.detect.disabled) fields.detect_objects = "true";
+  // Always detect objects whenever the server has Gemini configured.
+  if (capabilities?.object_detection) fields.detect_objects = "true";
 
   if (currentFilter) fields.filter = currentFilter;
 

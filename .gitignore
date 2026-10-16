@@ -7,6 +7,11 @@ __pycache__/
 .mypy_cache/
 *.egg-info/
 
+# Environment / secrets (never commit API keys)
+.env
+.env.*
+!.env.example
+
 # Runtime scratch space (never contains anything after a request finishes)
 tmp/
 
