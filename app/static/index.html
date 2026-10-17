@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>AI Image Processing</title>
-  <meta name="description" content="Upload images, detect objects with Gemini AI, and resize, enhance, convert or stylize them — all in the browser. Nothing is stored.">
+  <meta name="description" content="Upload images to detect objects with Gemini AI, and resize, convert or compress them, all in the browser. Nothing is stored.">
   <meta name="theme-color" content="#0c0e12" media="(prefers-color-scheme: dark)">
   <meta name="theme-color" content="#f0f2f5" media="(prefers-color-scheme: light)">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0%25' stop-color='%23f0465a'/%3E%3Cstop offset='100%25' stop-color='%23d92d5a'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='8' fill='%230c0e12'/%3E%3Ccircle cx='16' cy='16' r='8' fill='none' stroke='url(%23g)' stroke-width='3'/%3E%3C/svg%3E">
@@ -36,19 +36,6 @@
         <p class="paste-hint">Tip: you can paste an image onto this page too.</p>
       </section>
 
-      <fieldset class="group" id="filters-group">
-        <legend>Filters &amp; Styles</legend>
-        <div class="chips" id="filter-chips" role="radiogroup" aria-label="Photo filter">
-          <button type="button" class="chip active" data-filter="" aria-pressed="true">Normal</button>
-          <button type="button" class="chip" data-filter="golden_hour" aria-pressed="false">Golden hour</button>
-          <button type="button" class="chip" data-filter="black_and_white" aria-pressed="false">Black &amp; white</button>
-          <button type="button" class="chip" data-filter="vintage" aria-pressed="false">Old film</button>
-          <button type="button" class="chip" data-filter="warm" aria-pressed="false">Warm</button>
-          <button type="button" class="chip" data-filter="cool" aria-pressed="false">Cool</button>
-        </div>
-      </fieldset>
-
-
       <fieldset class="group">
         <legend>Size</legend>
         <div class="row">
@@ -78,7 +65,6 @@
             <input type="range" id="quality" min="1" max="100" value="85">
           </label>
         </div>
-        <label class="check"><input type="checkbox" id="enhance"> Enhance (denoise, contrast, sharpen)</label>
       </fieldset>
 
       <button class="process" id="process" type="submit" disabled>Process images</button>

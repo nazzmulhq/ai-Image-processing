@@ -59,10 +59,7 @@ def _response(result: ProcessResult, request_id: str) -> ProcessResponse:
         main_subject=result.main_subject,
         detected_objects=detected,
         processing=ProcessingFlags(
-            object_detection_completed=result.object_detection_completed,
-            image_enhancement_completed=result.image_enhancement_completed,
-            ai_edit_completed=result.ai_edit_completed),
-        filter_applied=result.filter_applied,
+            object_detection_completed=result.object_detection_completed),
         warnings=[ProcessingWarning(**w) for w in result.warnings],
         ai_models_used=result.ai_models_used,
         duration_ms=result.duration_ms,
@@ -82,21 +79,6 @@ async def process_image(
         description="JPEG, PNG or WEBP. Defaults to the input format.")] = None,
     quality: Annotated[int | None, Form(description="1-100 (JPEG/WEBP).")] = None,
     detect_objects: Annotated[bool, Form(description="Run Gemini object detection.")] = False,
-    enhance_image: Annotated[bool, Form(
-        description="Deterministic denoise/contrast/colour/sharpen.")] = False,
-    image_filter: Annotated[str | None, Form(
-        alias="filter",
-        description="Filter preset: golden_hour, black_and_white, vintage, warm, cool.")] = None,
-    brightness: Annotated[int, Form(description="Brightness adjustment (-100 to 100).")] = 0,
-    contrast: Annotated[int, Form(description="Contrast adjustment (-100 to 100).")] = 0,
-    saturation: Annotated[int, Form(description="Saturation adjustment (-100 to 100).")] = 0,
-    rotate: Annotated[int, Form(description="Rotation in degrees (0, 90, 180, 270).")] = 0,
-    flip_horizontal: Annotated[bool, Form(description="Flip image horizontally.")] = False,
-    flip_vertical: Annotated[bool, Form(description="Flip image vertically.")] = False,
-    ai_edit_prompt: Annotated[str | None, Form(
-        description="Instruction for a Gemini image edit (requires an edit model).")] = None,
-    remove_background: Annotated[bool, Form(
-        description="Gemini edit onto a plain white background (not transparent).")] = False,
     resources: AppResources = Depends(get_resources),
     request_id: str = Depends(get_request_id),
 ) -> ProcessResponse:
@@ -104,11 +86,7 @@ async def process_image(
         options = ProcessOptions(
             target_width=target_width, target_height=target_height,
             keep_aspect_ratio=keep_aspect_ratio, output_format=output_format, quality=quality,
-            detect_objects=detect_objects, enhance_image=enhance_image,
-            filter=image_filter, brightness=brightness, contrast=contrast,
-            saturation=saturation, rotate=rotate,
-            flip_horizontal=flip_horizontal, flip_vertical=flip_vertical,
-            ai_edit_prompt=ai_edit_prompt, remove_background=remove_background,
+            detect_objects=detect_objects,
         )
     except ValidationError as exc:
         raise AppError(ErrorCode.VALIDATION_ERROR, "Invalid processing options.",
@@ -131,9 +109,7 @@ async def capabilities(resources: AppResources = Depends(get_resources)) -> Capa
     s = resources.settings
     return CapabilitiesResponse(
         object_detection=s.detection_enabled and resources.gemini is not None,
-        ai_edit=s.ai_edit_enabled and resources.gemini is not None,
         vision_model=s.gemini_vision_model if s.detection_enabled else None,
-        image_edit_model=s.gemini_image_edit_model if s.ai_edit_enabled else None,
         accepted_formats=["JPEG", "PNG", "WEBP"],
         output_formats=[f.value for f in OutputFormat],
         max_upload_bytes=s.max_upload_bytes, max_image_pixels=s.max_image_pixels,

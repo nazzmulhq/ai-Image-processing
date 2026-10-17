@@ -31,16 +31,12 @@ class Settings(BaseSettings):
     # --- Gemini ------------------------------------------------------------------------------
     gemini_api_key: SecretStr | None = None
     gemini_vision_model: str | None = "gemini-3.8-flash"
-    # Empty disables ai_edit_prompt / remove_background (requests get a validation error).
-    gemini_image_edit_model: str | None = None
     gemini_detection_timeout_seconds: float = Field(60, gt=0)
-    gemini_edit_timeout_seconds: float = Field(120, gt=0)
     gemini_max_retries: int = Field(3, ge=0, le=10)
     # Max simultaneous Gemini calls from this process (protects your quota).
     gemini_max_concurrency: int = Field(4, ge=1)
     gemini_queue_timeout_seconds: float = Field(30, gt=0)
     gemini_detection_max_side: int = Field(1536, ge=256, le=4096)
-    gemini_edit_max_side: int = Field(2048, ge=256, le=4096)
 
     # --- Image limits ------------------------------------------------------------------------
     max_upload_bytes: int = Field(20 * 1024 * 1024, ge=1024)
@@ -70,7 +66,7 @@ class Settings(BaseSettings):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
 
-    @field_validator("gemini_image_edit_model", "gemini_vision_model", mode="before")
+    @field_validator("gemini_vision_model", mode="before")
     @classmethod
     def _blank_to_none(cls, value: object) -> object:
         if isinstance(value, str) and not value.strip():
@@ -84,10 +80,6 @@ class Settings(BaseSettings):
     @property
     def detection_enabled(self) -> bool:
         return self.gemini_configured and bool(self.gemini_vision_model)
-
-    @property
-    def ai_edit_enabled(self) -> bool:
-        return self.gemini_configured and bool(self.gemini_image_edit_model)
 
 
 @lru_cache

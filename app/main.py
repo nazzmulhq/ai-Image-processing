@@ -14,13 +14,15 @@ import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
+from typing import Any
 
 import anyio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
+from starlette.responses import Response
 
 from app.api.deps import AppResources
 from app.api.errors import register_exception_handlers
@@ -45,6 +47,27 @@ _MULTIPART_OVERHEAD = 1024 * 1024
 
 def _warm() -> None:
     return None
+
+
+class RevalidatingStaticFiles(StaticFiles):
+    """The page's script and styles. `no-cache` makes the browser re-check them on every load
+    (an unchanged file is a cheap 304), so an update is never hidden behind a stale copy."""
+
+    def file_response(self, *args: Any, **kwargs: Any) -> Response:
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
+def _index_html() -> str:
+    """The page, with its script and stylesheet links versioned by file modification time
+    (`/static/app.js?v=...`). Any change gives a new URL, so even a browser holding an old
+    cached copy loads the current file."""
+    html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    for name in ("app.js", "styles.css"):
+        version = (STATIC_DIR / name).stat().st_mtime_ns
+        html = html.replace(f'"/static/{name}"', f'"/static/{name}?v={version}"')
+    return html
 
 
 async def build_resources(settings: Settings) -> AppResources:
@@ -116,9 +139,9 @@ def create_app(settings: Settings | None = None,
         title=settings.app_name,
         version="2.0.0",
         description=(
-            "Stateless image processing: upload an image, optionally detect objects and edit "
-            "it with Google Gemini, and resize/enhance/convert/compress it with Pillow. The "
-            "processed image is returned inline; nothing is stored. No login required."
+            "Stateless image processing: upload an image, optionally detect objects with "
+            "Google Gemini, and resize/convert/compress it with Pillow. The processed image "
+            "is returned inline; nothing is stored. No login required."
         ),
         lifespan=lifespan,
     )
@@ -143,12 +166,12 @@ def create_app(settings: Settings | None = None,
     app.include_router(health.router)
 
     if settings.serve_frontend:
-        app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+        app.mount("/static", RevalidatingStaticFiles(directory=STATIC_DIR), name="static")
 
         @app.get("/", include_in_schema=False)
-        async def index() -> FileResponse:
-            return FileResponse(STATIC_DIR / "index.html",
-                                headers={"Cache-Control": "no-cache"})
+        async def index() -> HTMLResponse:
+            html = await anyio.to_thread.run_sync(_index_html)
+            return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
 
     return app
 

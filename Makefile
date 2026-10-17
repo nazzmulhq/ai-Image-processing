@@ -1,13 +1,10 @@
-.PHONY: install dev test lint format up down logs check-gemini
+.PHONY: install dev lint format up down logs check-gemini
 
 install:            ## Install dependencies (incl. dev tools)
 	uv sync
 
 dev:                ## Run the app with auto-reload at http://localhost:8000
 	uv run uvicorn app.main:app --reload --port 8000
-
-test:               ## Run the test suite
-	uv run pytest -q
 
 lint:               ## Lint
 	uv run ruff check .
@@ -24,5 +21,5 @@ down:
 logs:
 	docker compose logs -f app
 
-check-gemini:       ## Live check of GEMINI_API_KEY and model names
-	uv run python scripts/check_gemini.py --edit
+check-gemini:       ## Live check of GEMINI_API_KEY and the vision model
+	uv run python scripts/check_gemini.py

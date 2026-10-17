@@ -2,10 +2,9 @@
 temp folder only while it is processed, the result is returned inline, and the folder is
 deleted in `finally` on every outcome.
 
-Order: stream upload -> validate -> [Gemini edit] -> ([Gemini detect] || resize/enhance/
-encode) -> verify -> respond. Detection runs on the image that is returned (after any edit)
-and in parallel with the Pillow work; resizing never crops, so normalised boxes map exactly
-onto the final pixels.
+Order: stream upload -> validate -> ([Gemini detect] || resize/encode) -> verify -> respond.
+Detection runs in parallel with the Pillow work; resizing never crops, so normalised boxes
+map exactly onto the final pixels.
 """
 
 from __future__ import annotations
@@ -33,7 +32,6 @@ from app.services.gemini_service import (
     GeminiService,
     NormalizedBox,
 )
-from app.services.image_processing_service import closest_aspect_ratio, transform_box
 from app.services.pipeline_stages import (
     FinishResult,
     Limits,
@@ -74,10 +72,7 @@ class ProcessResult:
     main_subject: str | None
     detections: list[PixelDetection]
     object_detection_completed: bool
-    image_enhancement_completed: bool
-    ai_edit_completed: bool
     ai_models_used: list[str]
-    filter_applied: str | None = None
     warnings: list[dict[str, str]] = field(default_factory=list)
     duration_ms: int = 0
 
@@ -125,10 +120,6 @@ class ImageProcessor:
             raise AppError(ErrorCode.FEATURE_NOT_CONFIGURED,
                            "Object detection is not configured on this server "
                            "(set GEMINI_API_KEY).")
-        if options.wants_ai_edit and not (self.settings.ai_edit_enabled and self._gemini):
-            raise AppError(ErrorCode.FEATURE_NOT_CONFIGURED,
-                           "AI image editing is not configured on this server "
-                           "(set GEMINI_API_KEY and GEMINI_IMAGE_EDIT_MODEL).")
         max_dim = self.settings.max_output_dimension
         for name, value in (("target_width", options.target_width),
                             ("target_height", options.target_height)):
@@ -171,37 +162,7 @@ class ImageProcessor:
         models: list[str] = []
         source = workspace.upload_path
 
-        # 1. Optional AI edit (explicitly requested only).
-        ai_edit_completed = False
-        if options.wants_ai_edit:
-            assert self._gemini is not None
-            model_input: ModelInput = await self._cpu(
-                stage_model_input, str(source), settings.gemini_edit_max_side,
-                settings.max_image_pixels)
-            try:
-                edited = await self._gemini.edit_image(
-                    model_input.data, model_input.mime_type,
-                    prompt=options.effective_edit_prompt or "",
-                    aspect_ratio=closest_aspect_ratio((model_input.width, model_input.height)))
-            except GeminiError as err:
-                raise AppError(err.code, err.message) from err
-            edited_path = workspace.path / "edited"
-            await anyio.to_thread.run_sync(edited_path.write_bytes, edited.data)
-            try:
-                await self._cpu(stage_validate, str(edited_path), None,
-                                settings.max_image_pixels)
-            except AppError as exc:
-                raise AppError(ErrorCode.GEMINI_INVALID_RESPONSE,
-                               "The AI model returned an invalid image.") from exc
-            source = edited_path
-            ai_edit_completed = True
-            models.append(edited.model)
-            if options.remove_background:
-                warnings.append({"code": "BACKGROUND_NOT_TRANSPARENT",
-                                 "message": "The background was replaced with plain white by "
-                                            "the AI model; the output has no transparency."})
-
-        # 2. Detection (Gemini) and local processing (Pillow) run concurrently.
+        # Detection (Gemini) and local processing (Pillow) run concurrently.
         try:
             async with asyncio.TaskGroup() as group:
                 detect_task = (group.create_task(self._detect(source, warnings))
@@ -228,15 +189,10 @@ class ImageProcessor:
 
         detections = []
         for obj in detection.objects if detection else []:
-            norm_box = obj.box
-            if norm_box and (options.rotate or options.flip_horizontal or options.flip_vertical):
-                norm_box = transform_box(norm_box, rotate=options.rotate,
-                                         flip_horizontal=options.flip_horizontal,
-                                         flip_vertical=options.flip_vertical)
-            box = to_pixel_box(norm_box, encoded.width, encoded.height) if norm_box else None
+            box = to_pixel_box(obj.box, encoded.width, encoded.height) if obj.box else None
             detections.append(PixelDetection(label=obj.label, category=obj.category,
                                              description=obj.description, box=box,
-                                             normalized=norm_box, confidence=obj.confidence))
+                                             normalized=obj.box, confidence=obj.confidence))
         return ProcessResult(
             data=data, format=encoded.format, mime_type=encoded.mime_type,
             width=encoded.width, height=encoded.height, download_filename="",
@@ -244,9 +200,7 @@ class ImageProcessor:
             main_subject=detection.main_subject if detection else None,
             detections=detections,
             object_detection_completed=detection is not None,
-            image_enhancement_completed=finish.image_enhancement_completed,
-            filter_applied=finish.filter_applied,
-            ai_edit_completed=ai_edit_completed, ai_models_used=models, warnings=warnings,
+            ai_models_used=models, warnings=warnings,
         )
 
     async def _detect(self, source: Path, warnings: list[dict[str, str]]

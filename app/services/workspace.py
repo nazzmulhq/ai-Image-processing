@@ -39,9 +39,6 @@ class TempWorkspace:
         self.path.mkdir(mode=0o700)  # fails if it exists: request ids are unique
         return self
 
-    def exists(self) -> bool:
-        return self.path.is_dir()
-
     def cleanup(self) -> None:
         shutil.rmtree(self.path, ignore_errors=True)
 

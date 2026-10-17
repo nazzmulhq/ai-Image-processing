@@ -1,6 +1,6 @@
 # AI Image Processing
 
-Resize, convert, compress, filter and enhance images in the browser, with optional object detection by Google Gemini. There is no login and nothing is stored.
+Resize, convert and compress images in the browser, with object detection by Google Gemini. There is no login and nothing is stored.
 
 ## Setup
 
@@ -30,9 +30,7 @@ uv sync
 cp .env.example .env
 ```
 
-In `.env`, make two edits:
-- **`GEMINI_API_KEY`:** paste your key to turn on object detection. This is optional; get one at <https://aistudio.google.com/apikey>.
-- **`GEMINI_IMAGE_EDIT_MODEL`:** delete its value and leave it empty, because Gemini image editing needs a paid plan.
+In `.env`, paste your Gemini key into `GEMINI_API_KEY` to turn on object detection. This is optional; get a key at <https://aistudio.google.com/apikey>.
 
 **5. Run it.**
 

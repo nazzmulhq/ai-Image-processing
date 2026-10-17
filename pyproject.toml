@@ -19,22 +19,12 @@ dependencies = [
 [dependency-groups]
 dev = [
     "fastapi-cli[standard]>=0.0.5",  # lets `uv run fastapi dev` work
-    "pytest>=8.3",
-    "pytest-asyncio>=0.24",
     "ruff>=0.8",
     "locust>=2.32",
 ]
 
 [tool.uv]
 package = false
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-asyncio_mode = "auto"
-asyncio_default_fixture_loop_scope = "function"
-filterwarnings = [
-    "error::PIL.Image.DecompressionBombWarning",
-]
 
 [tool.ruff]
 line-length = 100
@@ -43,12 +33,11 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "S", "ASYNC", "SIM", "RUF"]
 ignore = [
-    "S101",   # assert is fine in tests
+    "S101",   # assert guards internal invariants
     "B008",   # FastAPI Depends()/Form() in defaults
     "RUF012", # mutable class attrs used by Pydantic
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S", "B", "ASYNC"]
 "loadtest/**" = ["S"]
 "scripts/**" = ["S"]

@@ -23,8 +23,6 @@ const els = {
   format: $("output-format"),
   quality: $("quality"),
   qualityValue: $("quality-value"),
-  enhance: $("enhance"),
-  filterChips: $("filter-chips"),
   process: $("process"),
   formError: $("form-error"),
   empty: $("empty"),
@@ -35,8 +33,6 @@ const els = {
   lightboxClose: $("lightbox-close"),
   toast: $("toast"),
 };
-
-let currentFilter = "";
 
 let capabilities = null;
 let staged = [];            // { file, url }
@@ -58,7 +54,6 @@ const FRIENDLY = {
   CORRUPTED_IMAGE: "The file looks damaged. Try exporting it again.",
   ANIMATED_IMAGE_UNSUPPORTED: "Animated images aren't supported. Use a still frame.",
   FEATURE_NOT_CONFIGURED: "Turn this option off, or ask the server owner to configure Gemini.",
-  GEMINI_SAFETY_BLOCKED: "Gemini declined this image. Try another image or prompt.",
   RATE_LIMITED: "Too many uploads in a short time. Try again in a minute.",
   PROCESSING_TIMEOUT: "Processing took too long. Try a smaller image.",
   NETWORK: "Check your connection and try again.",
@@ -94,7 +89,7 @@ async function loadCapabilities() {
     els.status.textContent = `Ready: object detection with ${capabilities.vision_model}`;
   } else {
     els.status.dataset.state = "limited";
-    els.status.textContent = "Ready: Gemini isn't configured, so only resize, convert and enhance are available";
+    els.status.textContent = "Ready: Gemini isn't configured, so object detection is off";
   }
 }
 
@@ -152,13 +147,13 @@ function readOptions() {
   if (els.height.value) fields.target_height = els.height.value;
   if (!els.keepAspect.checked) fields.keep_aspect_ratio = "false";
   if (els.format.value) fields.output_format = els.format.value;
-  if (els.format.value !== "PNG") fields.quality = els.quality.value;
-  if (els.enhance.checked) fields.enhance_image = "true";
+  // Only send quality when it was changed: the server uses the same default anyway, and
+  // sending it for a PNG kept as PNG only produces a "quality ignored" warning.
+  if (els.format.value !== "PNG" && Number(els.quality.value) !== capabilities?.default_quality) {
+    fields.quality = els.quality.value;
+  }
   // Always detect objects whenever the server has Gemini configured.
   if (capabilities?.object_detection) fields.detect_objects = "true";
-
-  if (currentFilter) fields.filter = currentFilter;
-
   return fields;
 }
 
@@ -185,30 +180,42 @@ function upload(file, fields, onProgress) {
   });
 }
 
-async function processOne(item, fields, view) {
+// Upload, waiting and retrying while the server answers "busy" (503, or a 429 that isn't
+// the per-minute rate limit).
+async function send(file, fields, onProgress, onWait) {
   for (let attempt = 0; ; attempt++) {
-    view.setProgress("Uploading…", 0);
-    const res = await upload(item.file, fields, (p) => {
-      view.setProgress(p < 1 ? `Uploading ${Math.round(p * 100)}%` : "Processing…", p);
-    });
-    if (res.status === 200 && res.body && res.body.success) {
-      view.showResult(res.body);
-      return;
-    }
-    const retryable = res.status === 503 ||
+    const res = await upload(file, fields, onProgress);
+    const busy = res.status === 503 ||
       (res.status === 429 && res.body?.error?.code !== "RATE_LIMITED");
-    if (retryable && attempt < MAX_RETRIES) {
-      const wait = res.retryAfter ?? 2 ** attempt;
-      view.setProgress(`Server busy, retrying in ${wait}s…`, 1, true);
-      await sleep(wait * 1000);
-      continue;
-    }
-    view.showError(res.status === 0
-      ? { code: "NETWORK", message: "The upload didn't reach the server." }
-      : res.body?.error ?? { code: `HTTP_${res.status}`, message: "The server returned an unexpected response." },
-      res.body?.request_id, () => processOne(item, fields, view));
+    if (!busy || attempt >= MAX_RETRIES) return res;
+    const wait = res.retryAfter ?? 2 ** attempt;
+    onWait(wait);
+    await sleep(wait * 1000);
+  }
+}
+
+// Run async tasks with at most MAX_PARALLEL in flight (the server's per-client limit).
+async function runLimited(tasks) {
+  let next = 0;
+  async function worker() {
+    while (next < tasks.length) await tasks[next++]();
+  }
+  await Promise.all(Array.from({ length: Math.min(MAX_PARALLEL, tasks.length) }, worker));
+}
+
+async function processOne(item, fields, view) {
+  view.setProgress("Uploading…", 0);
+  const res = await send(item.file, fields,
+    (p) => view.setProgress(p < 1 ? `Uploading ${Math.round(p * 100)}%` : "Processing…", p),
+    (wait) => view.setProgress(`Server busy, retrying in ${wait}s…`, 1, true));
+  if (res.status === 200 && res.body && res.body.success) {
+    view.showResult(res.body);
     return;
   }
+  view.showError(res.status === 0
+    ? { code: "NETWORK", message: "The upload didn't reach the server." }
+    : res.body?.error ?? { code: `HTTP_${res.status}`, message: "The server returned an unexpected response." },
+    res.body?.request_id, () => processOne(item, fields, view));
 }
 
 async function runQueue(items, fields) {
@@ -217,14 +224,7 @@ async function runQueue(items, fields) {
   els.prints.firstElementChild?.scrollIntoView({
     behavior: reduceMotion ? "auto" : "smooth", block: "start",
   });
-  let next = 0;
-  async function worker() {
-    while (next < queue.length) {
-      const { item, view } = queue[next++];
-      await processOne(item, fields, view);
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(MAX_PARALLEL, queue.length) }, worker));
+  await runLimited(queue.map(({ item, view }) => () => processOne(item, fields, view)));
 }
 
 // --- Photo crossfade -------------------------------------------------------------------
@@ -314,6 +314,24 @@ function createPrint(item) {
   zoom.addEventListener("click", () => openLightbox(photo.src, photo.alt, zoom));
   if (!CAN_COPY_IMAGES) copyBtn.remove();
 
+  toggle.addEventListener("click", () => {
+    showingResult = !showingResult;
+    toggle.setAttribute("aria-pressed", String(!showingResult));
+    toggle.textContent = showingResult ? "Show original" : "Show result";
+    swapPhoto(photo, showingResult ? resultUrl : item.url,
+      `${showingResult ? "Processed" : "Original"}: ${item.file.name}`);
+    marks.hidden = !showingResult;
+  });
+
+  copyBtn?.addEventListener("click", async () => {
+    try {
+      await copyImageToClipboard(resultUrl);
+      showToast("Copied image to clipboard");
+    } catch {
+      showToast("Couldn't copy the image");
+    }
+  });
+
   function setProgress(text, fraction, indeterminate = false) {
     developingText.textContent = text;
     barFill.style.width = `${Math.round(fraction * 100)}%`;
@@ -340,24 +358,6 @@ function createPrint(item) {
     renderFlags(q(".flags"), body);
     renderObjects(q(".objects"), marks, body.detected_objects);
     renderWarnings(q(".warnings"), body.warnings);
-
-    toggle.addEventListener("click", () => {
-      showingResult = !showingResult;
-      toggle.setAttribute("aria-pressed", String(!showingResult));
-      toggle.textContent = showingResult ? "Show original" : "Show result";
-      swapPhoto(photo, showingResult ? resultUrl : item.url,
-        `${showingResult ? "Processed" : "Original"}: ${item.file.name}`);
-      marks.hidden = !showingResult;
-    });
-
-    copyBtn?.addEventListener("click", async () => {
-      try {
-        await copyImageToClipboard(resultUrl);
-        showToast("Copied image to clipboard");
-      } catch {
-        showToast("Couldn't copy the image");
-      }
-    });
   }
 
   function showError(error, requestId, retry) {
@@ -401,6 +401,7 @@ function renderFacts(dl, body) {
     ["File size", formatBytes(image.size_bytes), `was ${formatBytes(original.size_bytes)}`],
     ["Time", `${(body.duration_ms / 1000).toFixed(1)} s`, null],
   ];
+  dl.replaceChildren();
   for (const [term, value, before] of rows) {
     const dt = document.createElement("dt");
     dt.textContent = term;
@@ -414,9 +415,10 @@ function renderFacts(dl, body) {
 function renderFlags(ul, body) {
   const p = body.processing;
   const flags = [];
-  if (p.object_detection_completed) flags.push(`${body.detected_objects.length} objects found`);
-  if (p.image_enhancement_completed) flags.push("Enhanced");
-  if (p.ai_edit_completed) flags.push("Edited by AI");
+  if (p.object_detection_completed) {
+    const n = body.detected_objects.length;
+    flags.push(`${n} object${n === 1 ? "" : "s"} found`);
+  }
   for (const text of flags) {
     const li = document.createElement("li");
     li.textContent = text;
@@ -534,20 +536,6 @@ els.clearTray.addEventListener("click", () => {
 
 els.quality.addEventListener("input", () => { els.qualityValue.textContent = els.quality.value; });
 els.format.addEventListener("change", () => { els.quality.disabled = els.format.value === "PNG"; });
-
-if (els.filterChips) {
-  els.filterChips.addEventListener("click", (e) => {
-    const chip = e.target.closest(".chip");
-    if (!chip) return;
-    els.filterChips.querySelectorAll(".chip").forEach((c) => {
-      c.classList.remove("active");
-      c.setAttribute("aria-pressed", "false");
-    });
-    chip.classList.add("active");
-    chip.setAttribute("aria-pressed", "true");
-    currentFilter = chip.dataset.filter || "";
-  });
-}
 
 els.form.addEventListener("submit", (e) => {
   e.preventDefault();

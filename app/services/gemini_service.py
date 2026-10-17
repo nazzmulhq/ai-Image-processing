@@ -1,10 +1,10 @@
 """Gemini integration (google-genai SDK, `client.models.generate_content`).
 
 Verified against google-genai 2.31.0: `types.GenerateContentConfig` fields
-`response_mime_type`, `response_json_schema`, `response_modalities`, `image_config`,
-`http_options` (timeout in ms); `types.Part.from_bytes(data=, mime_type=)`;
-`errors.APIError` (`.code`, `.status`, `.details`); SDK retries are off unless
-`retry_options` is set, so all retries here are our own.
+`response_mime_type`, `response_json_schema`, `http_options` (timeout in ms);
+`types.Part.from_bytes(data=, mime_type=)`; `errors.APIError` (`.code`, `.status`,
+`.details`); SDK retries are off unless `retry_options` is set, so all retries here are our
+own.
 
 Calls use the SDK's async client (`client.aio`) so they never block the event loop. An
 asyncio semaphore caps concurrent Gemini calls per process; retries use exponential backoff
@@ -76,7 +76,6 @@ DETECTION_JSON_SCHEMA: dict[str, Any] = {
 }
 
 MAX_OBJECTS = 50
-MAX_EDIT_OUTPUT_BYTES = 40 * 1024 * 1024
 
 _SAFETY_FINISH_REASONS = {
     types.FinishReason.SAFETY, types.FinishReason.BLOCKLIST,
@@ -128,18 +127,8 @@ class DetectionResult:
     truncated_objects: int = 0
 
 
-@dataclass(frozen=True, slots=True)
-class EditedImage:
-    data: bytes
-    mime_type: str
-    model: str
-
-
 class GeminiService(Protocol):
     async def detect_objects(self, image: bytes, mime_type: str) -> DetectionResult: ...
-
-    async def edit_image(self, image: bytes, mime_type: str, *, prompt: str,
-                         aspect_ratio: str | None) -> EditedImage: ...
 
     async def aclose(self) -> None: ...
 
@@ -328,45 +317,7 @@ class GoogleGeminiService:
                               "The AI model's detection output was truncated.")
         return parse_detection_payload(response.text, model=model)
 
-    async def edit_image(self, image: bytes, mime_type: str, *, prompt: str,
-                         aspect_ratio: str | None) -> EditedImage:
-        model = self._settings.gemini_image_edit_model
-        if not model:
-            raise GeminiError(ErrorCode.GEMINI_CONFIGURATION_ERROR,
-                              "AI image editing is not configured on this server.")
-        config = types.GenerateContentConfig(
-            response_modalities=["TEXT", "IMAGE"],
-            image_config=types.ImageConfig(aspect_ratio=aspect_ratio) if aspect_ratio else None,
-            http_options=types.HttpOptions(
-                timeout=int(self._settings.gemini_edit_timeout_seconds * 1000)),
-        )
-        response = await self._call(
-            model=model,
-            contents=[types.Part.from_bytes(data=image, mime_type=mime_type), prompt],
-            config=config,
-        )
-        return self._extract_image(response, model)
-
     # --- Internals -----------------------------------------------------------------------
-    @staticmethod
-    def _extract_image(response: types.GenerateContentResponse, model: str) -> EditedImage:
-        candidate = response.candidates[0]  # type: ignore[index]
-        parts = (candidate.content.parts if candidate.content else None) or []
-        image_parts = [
-            p for p in parts
-            if not p.thought and p.inline_data is not None and p.inline_data.data
-            and (p.inline_data.mime_type or "").startswith("image/")
-        ]
-        if not image_parts:
-            raise GeminiError(ErrorCode.GEMINI_INVALID_RESPONSE,
-                              "The AI model did not return an edited image.")
-        blob = image_parts[-1].inline_data
-        assert blob is not None and blob.data is not None
-        if len(blob.data) > MAX_EDIT_OUTPUT_BYTES:
-            raise GeminiError(ErrorCode.GEMINI_INVALID_RESPONSE,
-                              "The AI model returned an oversized image.")
-        return EditedImage(data=blob.data, mime_type=blob.mime_type or "", model=model)
-
     async def _call(self, *, model: str, contents: list[Any],
                     config: types.GenerateContentConfig) -> types.GenerateContentResponse:
         attempts = self._settings.gemini_max_retries + 1

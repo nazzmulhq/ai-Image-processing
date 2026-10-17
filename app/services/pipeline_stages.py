@@ -15,15 +15,10 @@ from PIL import Image
 from app.schemas.image import ProcessOptions
 from app.services.image_processing_service import (
     EncodedImage,
-    apply_adjustments,
-    apply_filter,
-    apply_transform,
-    canonical_filter_name,
     check_output_size,
     compute_target_size,
     encode_for_model,
     encode_image,
-    enhance_image,
     has_visible_transparency,
     load_normalized,
     resize_image,
@@ -43,15 +38,11 @@ class Limits:
 class ModelInput:
     data: bytes
     mime_type: str
-    width: int
-    height: int
 
 
 @dataclass(slots=True)
 class FinishResult:
     encoded: EncodedImage
-    image_enhancement_completed: bool
-    filter_applied: str | None = None
     warnings: list[dict[str, str]] = field(default_factory=list)
 
 
@@ -70,47 +61,29 @@ def stage_model_input(path: str, max_side: int, max_pixels: int) -> ModelInput:
     image = load_normalized(Path(path), max_pixels=max_pixels)
     try:
         data, mime = encode_for_model(image, max_side=max_side)
-        return ModelInput(data=data, mime_type=mime, width=image.width, height=image.height)
+        return ModelInput(data=data, mime_type=mime)
     finally:
         image.close()
 
 
 def stage_finish(path: str, work_dir: str, options: dict[str, Any], default_format: str,
                  limits: Limits) -> FinishResult:
-    """Normalise -> transform (rotate/flip) -> resize -> adjust -> filter -> enhance -> encode ->
-    verify. Writes `output.<ext>` into the request's temp folder."""
+    """Normalise -> resize -> encode -> verify. Writes `output.<ext>` into the request's
+    temp folder."""
     opts = ProcessOptions.model_validate(options)
     warnings: list[dict[str, str]] = []
     image = load_normalized(Path(path), max_pixels=limits.max_pixels)
     try:
-        if opts.rotate or opts.flip_horizontal or opts.flip_vertical:
-            image = apply_transform(image, rotate=opts.rotate,
-                                    flip_horizontal=opts.flip_horizontal,
-                                    flip_vertical=opts.flip_vertical)
-
         target = compute_target_size(image.width, image.height, opts.target_width,
                                      opts.target_height, opts.keep_aspect_ratio)
         check_output_size(target, max_dimension=limits.max_output_dimension,
                           max_pixels=limits.max_pixels)
         image = resize_image(image, target)
 
-        if opts.brightness != 0 or opts.contrast != 0 or opts.saturation != 0:
-            image = apply_adjustments(image, brightness=opts.brightness,
-                                      contrast=opts.contrast,
-                                      saturation=opts.saturation)
-
-        applied_filter = None
-        if opts.filter and opts.filter not in ("none", ""):
-            image = apply_filter(image, opts.filter)
-            applied_filter = canonical_filter_name(opts.filter)
-
-        enhanced = False
-        if opts.enhance_image:
-            image = enhance_image(image)
-            enhanced = True
-
         out_format = opts.output_format.value if opts.output_format else default_format
-        if out_format == "PNG" and opts.quality is not None:
+        # Only worth a warning when PNG was asked for explicitly. When PNG is just the input's
+        # own format, the quality setting simply doesn't apply.
+        if opts.output_format == "PNG" and opts.quality is not None:
             warnings.append({"code": "QUALITY_IGNORED_FOR_PNG",
                              "message": "PNG output is lossless; the quality setting was "
                                         "ignored."})
@@ -121,7 +94,6 @@ def stage_finish(path: str, work_dir: str, options: dict[str, Any], default_form
         quality = opts.quality if opts.quality is not None else limits.default_quality
         dest = Path(work_dir) / f"output.{OUTPUT_EXTENSIONS[out_format]}"
         encoded = encode_image(image, dest, image_format=out_format, quality=quality)
-        return FinishResult(encoded=encoded, image_enhancement_completed=enhanced,
-                            filter_applied=applied_filter, warnings=warnings)
+        return FinishResult(encoded=encoded, warnings=warnings)
     finally:
         image.close()

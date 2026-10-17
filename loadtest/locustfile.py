@@ -38,10 +38,6 @@ class ImageUser(HttpUser):
     def resize_to_webp(self) -> None:
         self._process({"target_width": "256", "output_format": "WEBP", "quality": "80"})
 
-    @task(2)
-    def enhance(self) -> None:
-        self._process({"enhance_image": "true"})
-
     @task(1)
     def capabilities(self) -> None:
         self.client.get("/api/v1/capabilities")
